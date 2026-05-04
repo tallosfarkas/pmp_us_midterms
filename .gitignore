@@ -1,0 +1,21 @@
+# R session artifacts
+.RData
+.RDataTmp
+.Rhistory
+.Rapp.history
+.Ruserdata
+.Renviron
+.Rproj.user/
+
+# R Markdown / knitr cache & temp
+*_cache/
+/cache/
+*.utf8.md
+*.knit.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code internal
+.claude/
