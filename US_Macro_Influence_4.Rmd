@@ -1,0 +1,1180 @@
+---
+title: "Global Macro"
+output: pdf_document 
+date: "2025-05-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# US Macro Regimes on Global Markets
+
+## Preparation
+
+### Libraries
+
+```{r include=FALSE}
+library(quantmod)
+library(dplyr)
+library(tidyquant)
+library(TTR)
+library(tidyr)
+library(corrplot)
+library(MASS)
+library(Rblpapi)
+library(tidyverse)
+library(tibble)
+library(pheatmap)
+library(quadprog)
+library(frenchdata)
+library(lubridate)
+library(purrr)
+library(broom)
+library(kableExtra)
+
+
+```
+
+
+### Get Necessary Data
+
+```{r}
+load("~/Documents/Wu_Wien/PMP_Capital_Markets_Program /Managers/PMP_GlobalMacro/Minimal_Data.RData")
+```
+
+
+1. US Macroeconomic Data
+
+```{r}
+start_date_macro <- as.Date("1988-01-01")
+
+# Download macro data from FRED --> GDP, Consumer Price Index, Fed Funds Rate
+getSymbols(c("GDP", "CPIAUCSL", "FEDFUNDS"), src = "FRED", from = start_date_macro)
+
+# Load NBER recession dates
+nber_dates <- tq_get("USREC", get = "economic.data", from = start_date_macro)
+nber_xts <- xts(nber_dates[["price"]], order.by = nber_dates$date)
+
+# Merge data (monthly basis)
+macro_data <- merge(
+  GDP,
+  CPIAUCSL,
+  FEDFUNDS,
+  nber_xts
+)
+colnames(macro_data) <- c("GDP", "CPI", "FedFundsRate","NBER")
+
+macro_data_df <- data.frame(date = index(macro_data), coredata(macro_data))
+
+# Apply lags for information availability
+macro_data_df <- macro_data_df %>%
+  mutate(
+    GDP = lag(GDP, 2),
+    CPI = lag(CPI, 1),
+  )
+
+# Forward-fill for monthly completeness
+macro_data_df[ , 2:5] <- na.locf(macro_data_df[ , 2:5], na.rm = FALSE)
+
+# Caluclate YoY Growth
+macro_data_df <- macro_data_df %>%
+  mutate(
+    GDP_YoY = ROC(GDP, n = 12, type = "discrete"),
+    CPI_YoY = ROC(CPI, n = 12, type = "discrete")
+  )
+
+
+# Create Regimes
+
+## GDP
+
+macro_data_df <- macro_data_df %>%
+  mutate(growth_regime = if_else( NBER == 1, "Low", "High"))
+
+## Inflation
+
+macro_data_df <- macro_data_df %>%
+  mutate(
+    CPI_YoY_lag = lag(CPI_YoY, 12),
+    inflation_surprise = CPI_YoY - CPI_YoY_lag,
+    inflation_regime = case_when(
+      CPI_YoY > 0.02 & inflation_surprise > 0 ~ "High",
+      TRUE ~ "Low"
+    )
+  )
+
+## Fed Rate
+
+macro_data_df <- macro_data_df %>%
+  mutate(
+    FedChange = FedFundsRate - lag(FedFundsRate),
+    FedRegime = case_when(
+      FedChange > 0 ~ "Hiking",
+      FedChange < 0 ~ "Cutting",
+      TRUE ~ "Flat"
+    )
+  )
+
+## Classic Regimes
+
+macro_data_df <- macro_data_df %>%
+  mutate(
+    macro_regime = case_when(
+      growth_regime == "High" & inflation_regime == "Low" ~ "Goldilocks",
+      growth_regime == "High" & inflation_regime == "High" ~ "Overheating",
+      growth_regime == "Low"  & inflation_regime == "Low" ~ "Downturn",
+      growth_regime == "Low"  & inflation_regime == "High" ~ "Stagflation"
+    )
+  )
+
+## Check Fed Rate
+
+macro_data_df <- macro_data_df %>%
+  mutate(
+    combined_regime = paste(macro_regime, FedRegime, sep = " + ")
+  )
+macro_data_df <- na.omit(macro_data_df)
+
+# Check Regimes
+Regimes <- unique(macro_data_df$macro_regime)
+
+
+```
+
+2. Country ETF
+
+
+```{r}
+##### Bloomberg Data ######
+# blpConnect()
+# 
+# securities <- c(
+#                 ### Emerging Markets ###
+#                 "MSEUSIA Index",  # India
+#                 "MSEUSCF Index",  # China
+#                 "MSIUEG Index",   # Egypt
+#                 "MSEUSSA Index",  # South Africa
+#                 "MSEUSKO Index",  # South Korea
+#                 "MSEUSTW Index",  # Taiwan
+#                 "MSEUSTHF Index", # Thailand
+#                 "MSEUSCZ Index",  # Czeck Republic
+#                 "MSEUSPO Index",  # Poland
+#                 "MXAR Index",     # Argentina
+#                 "MXCL Index",     # Chile
+#                 "M3GR Index",     # Greeece
+#                 "MSEUSTK Index",  # Turkey
+# 
+#                 ### Developed Market ###
+#                 "MSDUCA Index",   # Canada
+#                 "MXUS Index",     # USA
+#                 "MSDUFR Index",   # France
+#                 "MSDUGR Index",   # Germany
+#                 "MXIL Index",     # Israel
+#                 "MSDUIT Index",   # Italy
+#                 "MSDUSW Index",   # Sweden
+#                 "MSDUSP Index",   # Spain
+#                 "MSDUSZ Index",   # Switzerland
+#                 "MSDUUK Index",   # United Kingdom
+#                 "MSDUAS Index",   # Australia
+#                 "MSDUHK Index",   # Hong Kong
+#                 "MSDUJN Index",   # Japan
+#                 "MSDUSG Index"    # Singapore
+# )
+# 
+# countries <- c(
+#   ### Emerging Markets ###
+#   "India",
+#   "China",
+#   "Egypt",
+#   "South Africa",
+#   "South Korea",
+#   "Taiwan",
+#   "Thailand",
+#   "Czech Republic",
+#   "Poland",
+#   "Argentina",
+#   "Chile",
+#   "Greece",
+#   "Turkey",
+# 
+#   ### Developed Market ###
+#   "Canada",
+#   "USA",
+#   "France",
+#   "Germany",
+#   "Israel",
+#   "Italy",
+#   "Sweden",
+#   "Spain",
+#   "Switzerland",
+#   "United Kingdom",
+#   "Australia",
+#   "Hong Kong",
+#   "Japan",
+#   "Singapore"
+# )
+# 
+# 
+# start_date <- as.Date("1990-01-01")
+# 
+# end_date <- Sys.Date()
+# 
+# Fields <- c("PX_LAST")
+# 
+# 
+# etf_close_df <- data.frame()
+# 
+# for(i in 1:length(securities)) {
+#   # Get Bloomberg data
+#   security_df <- bdh(securities[i], fields = "PX_LAST", start.date = start_date, end.date = end_date)
+# 
+#   # Rename the PX_LAST column to the ticker name
+#   colnames(security_df)[2] <- countries[i]
+# 
+#   # Merge using full_join on the date column
+#   if (nrow(etf_close_df) == 0) {
+#     etf_close_df <- security_df
+#   } else {
+#     etf_close_df <- full_join(etf_close_df, security_df, by = "date")
+#   }
+# }
+# colnames(etf_close_df) <- c("date", countries)
+# 
+# 
+# etf_close_xts <- xts(etf_close_df[,-1], order.by = etf_close_df$date)
+
+# Calculate Returns
+etf_close_xts_weekly <- apply.weekly(etf_close_xts, first)
+etf_returns_xts <- ROC(etf_close_xts_weekly, n = 1, type = "discrete")
+
+# Create dataframe with dates labeled as start-of-week
+etf_returns_df <- data.frame(
+  date = index(etf_returns_xts),
+  coredata(etf_returns_xts)
+)
+
+# Remove NA at the beginning (from ROC calculation)
+etf_returns_df <- etf_returns_df[-1, ]
+
+```
+
+# Inlude Trade Deficit to the US
+
+## Get Exporting Data to the US 
+
+```{r}
+# # Reporting country codes from IMF DOTS (to US = 111)
+# reporting_codes <- c(
+#   "India"           = "534",
+#   "China"           = "924",
+#   "Egypt"           = "469",
+#   "South.Africa"    = "199",
+#   "South.Korea"     = "542",
+#   "Taiwan"          = "528",
+#   "Thailand"        = "578",
+#   "Czech.Republic"  = "939",
+#   "Poland"          = "964",
+#   "Argentina"       = "213",
+#   "Chile"           = "228",
+#   "Greece"          = "174",
+#   "Turkey"          = "186",
+#   "Canada"          = "156",
+#   "USA"             = "111",
+#   "France"          = "132",
+#   "Germany"         = "134",
+#   "Israel"          = "436",
+#   "Italy"           = "136",
+#   "Sweden"          = "144",
+#   "Spain"           = "184",
+#   "Switzerland"     = "146",
+#   "United.Kingdom"  = "112",
+#   "Australia"       = "193",
+#   "Hong.Kong"       = "532",
+#   "Japan"           = "158",
+#   "Singapore"       = "576"
+# )
+# 
+# length(reporting_codes)
+# 
+# # Build the Bloomberg tickers for Exports to the U.S.
+# export_tickers <- paste0(reporting_codes, "D0111 Index")
+# names(export_tickers) <- names(reporting_codes)
+# 
+# # View the tickers
+# export_tickers
+# 
+# 
+# get_trading_data <- function(ticker) {
+#   tryCatch({
+#     bdh(ticker, "PX_LAST", start.date = as.Date("1190-02-01"))
+#   }, error = function(e) NULL)
+# }
+# 
+# # Loop over all tickers
+# export_data_list <- lapply(export_tickers, get_trading_data)
+# names(export_data_list) <- names(export_tickers)
+# 
+# export_df <- bind_rows(export_data_list, .id = "country")
+# 
+# 
+# length(unique(export_df$country))
+# 
+# 
+# colnames(export_df)[3] <- "Exports_US"
+```
+
+## Get Trade Imports to the US
+
+```{r}
+# import_tickers <- paste0("111D0", reporting_codes, " Index")
+# names(import_tickers) <- names(reporting_codes)
+# 
+# 
+# 
+# # Download import data for each country
+# import_data_list <- lapply(import_tickers, get_trading_data)
+# names(import_data_list) <- names(import_tickers)
+# 
+# import_df <- bind_rows(import_data_list, .id = "country")
+# 
+# colnames(import_df)[3] <- "Imports_US"
+# 
+# Trade_data <- left_join(export_df, import_df, by = c("date", "country"))
+
+```
+
+## Calcualte the Trade Deficit/Surplus
+
+```{r}
+Trade_data <- Trade_data %>%
+  mutate(
+    Trade_Balance = Exports_US - Imports_US
+  )
+
+Trade_data_summary <- Trade_data %>%
+  group_by(country)%>%
+  summarize(
+    Mean = mean(Trade_Balance),
+    variability = sd(Trade_Balance)
+  )
+
+Trade_data_summary
+```
+
+
+## Create weekly base for the performance analysis
+
+
+```{r}
+
+## Combine the weekly returns with the monthly macroeconomic data to create a bigger data base for the optimization
+
+## Create a new column with the corresponding month of the weekly return which is used to merge the data
+
+
+etf_returns_df <- etf_returns_df %>%
+  mutate(month_date = floor_date(date, "month"))
+
+## Merge data according to the month date column
+
+# Create long format dataframe before merging
+etf_returns_long <- etf_returns_df %>%
+  pivot_longer(-c(date, month_date), names_to = "ETF", values_to = "return")
+
+# Merge the data
+returns_with_regimes <- etf_returns_long %>%
+  left_join(
+    macro_data_df %>%
+      dplyr::select(date, macro_regime,combined_regime) %>%
+      rename(month_date = date),
+    by = "month_date") %>%
+  dplyr::select(-month_date)
+
+
+returns_with_regimes <- returns_with_regimes %>%
+  filter(date >= as.Date("1990-02-01")) %>%
+  filter(!is.na(macro_regime))
+  
+knitr:: kable(returns_with_regimes %>%
+  group_by(macro_regime) %>%
+  summarise(n_obs = sum(!is.na(return))),
+  caption = "Observations in each regime" )
+
+```
+
+## Helper for missing data 
+
+```{r}
+remove_na_heavy <- function(df, row_thresh = 0.5, col_thresh = 0.5,
+                            interpolate = FALSE) {
+  if (!is.data.frame(df)) {
+    stop("Input must be a data frame.")
+  }
+  
+  # Convert percentage to proportion if needed
+  if (row_thresh > 1) row_thresh <- row_thresh / 100
+  if (col_thresh > 1) col_thresh <- col_thresh / 100
+  
+  # Step 1: Drop rows with too many NAs
+  row_na_prop <- rowMeans(is.na(df))
+  df <- df[row_na_prop <= row_thresh, , drop = FALSE]
+  
+  # Step 2: Drop columns with too many NAs
+  col_na_prop <- colMeans(is.na(df))
+  df <- df[, col_na_prop <= col_thresh, drop = FALSE]
+  
+  # Step 3: Interpolate missing values (optional)
+  if (interpolate) {
+    is_numeric <- sapply(df, is.numeric)
+    
+    df[is_numeric] <- lapply(df[is_numeric], function(column) {
+      na_index <- is.na(column)
+      if (all(na_index)) return(column)  # skip all-NA columns
+      approx(x = which(!na_index),
+             y = column[!na_index],
+             xout = seq_along(column),
+             rule = 2)$y  # rule = 2 → use nearest value for extrapolation
+    })
+  }
+  
+  return(df)
+}
+
+```
+
+## Performance Analysis
+
+```{r}
+summarise_regime <- function(data, regime_name) {
+  
+  performance_list <- list()
+  correlation_list <- list()
+  portfolio_list <- list()
+  
+  Port_Ret <- numeric()
+  Port_Sd <- numeric()
+  Port_Sharpe <- numeric()
+  
+  data <- as_tibble(data)
+  
+  for(regime in regime_name){
+  df <- data %>%
+    filter(macro_regime == regime) %>%
+    dplyr::select(date, ETF, return) %>%
+    pivot_wider(names_from = ETF, values_from = return)
+  
+   # Keep only ETFs with at least some data
+  valid_cols <- colSums(!is.na(df[ , -1])) > 0
+  df <- df[ , c(TRUE, valid_cols)]  
+  df <- df[rowSums(is.na(df[ , -1])) < ncol(df) - 1, ]
+  
+  #Annualized stats
+  returns_mat <- as.matrix(df[ , -1])
+  returns_mat <- returns_mat[ , colSums(!is.na(returns_mat)) >= 52]
+  mean_returns <- colMeans(returns_mat, na.rm = TRUE) * 52
+  US_mean <- mean(returns_mat[,"USA"],na.rm = TRUE) * 52
+  mean_excess_return_US <- mean_returns - US_mean 
+  sd_returns <- apply(returns_mat, 2, sd,na.rm = TRUE) * sqrt(52)
+  sharpe_ratios <- mean_returns / sd_returns
+  
+  # Assemble summary table
+  perf_df <- data.frame(
+    ETF = colnames(returns_mat),
+    AnnualReturn = round(mean_returns, 4),
+    AnnualVolatility = round(sd_returns, 4),
+    AnnualExcessRetUS = round(mean_excess_return_US,4),
+    Sharpe = round(sharpe_ratios, 2)
+  ) %>%
+    arrange(desc(Sharpe))
+  
+  performance_list[[regime]] <- perf_df
+  
+  ### Correlation ###
+  corr_matrix <- round(cor(returns_mat, use = "pairwise.complete.obs"), 2)
+  
+  correlation_list[[regime]] <- corr_matrix
+  
+ ### Mean-Variance Portfolio Optimization ###
+  
+  # Expectation and Covariance Matrix
+  returns_mat <- as.matrix(remove_na_heavy(as.data.frame(returns_mat), row_thresh = 0.5,
+                                           col_thresh = 0.3,interpolate = TRUE))
+  
+  mu <- colMeans(returns_mat, na.rm = TRUE) * 52
+  Sigma <- cov(returns_mat, use = "pairwise.complete.obs") * 52
+  # Dmat and dvec for solve.QP
+  Dmat <- 2 * Sigma  # QP minimizes (1/2) * w' D w, so we multiply by 2
+  dvec <- rep(0, length(mu))
+  
+  # Constraints: sum(weights) = 1, and weights >= 0
+  n_assets <- length(mu)
+  # Equality constraint: sum(weights) = 1
+  A_eq <- matrix(1, nrow = n_assets, ncol = 1)
+  # Inequality constraints: weights >= 0
+  A_ineq <- diag(n_assets)
+  # Combine constraint matrix
+  Amat <- cbind(A_eq, A_ineq)  # Each column is a constraint
+  # Right-hand side of constraints
+  bvec <- c(1, rep(0, n_assets))  # sum(weights) = 1 and weights >= 0
+  # Solve QP
+  sol <- solve.QP(Dmat, dvec, Amat, bvec, meq = 1)
+  
+  weights <- sol$solution
+  
+  port_ret <- as.numeric(t(weights) %*% mu)
+  port_var <- as.numeric(t(weights) %*% Sigma %*% weights)
+  port_sd <- sqrt(pmax(port_var, 0))
+  port_sharpe <- port_ret / port_sd
+
+  mean_var_df <- data.frame(
+    ETF = colnames(returns_mat),
+    Weights = round(as.numeric(weights), 6)
+  )
+  
+  Port_Ret[regime] <- port_ret
+  Port_Sd[regime] <- port_sd
+  Port_Sharpe[regime] <- port_sharpe
+  portfolio_list[[regime]] <- mean_var_df
+  
+  }
+
+  port_per_df <- data.frame(
+    Regime = names(Port_Ret),
+    Portfolio_Return = Port_Ret,
+    Portfolio_SD = Port_Sd,
+    Portfolio_Sharpe = Port_Sharpe
+  )
+
+
+  return(list(
+    performance = performance_list,
+    correlation = correlation_list,
+    portfolio =  portfolio_list,
+    portfolio_perf = port_per_df
+  ))
+}
+
+results <- summarise_regime(returns_with_regimes, Regimes)
+```
+
+## Plot Correlations
+
+```{r, fig.width=8, fig.height=8}
+for (regime in Regimes) {
+  corr_matrix <- results$correlation[[regime]]
+  
+  corrplot(
+    corr_matrix,
+    method = "color",
+    type = "upper",
+    order = "hclust",
+    addCoef.col = "black",
+    tl.cex = 0.7,         # Smaller label size
+    number.cex = 0.6,     # Smaller number size
+    col = colorRampPalette(c("blue", "white", "red"))(200),
+    cl.pos = "n",
+    title = paste("Correlation –", regime),
+     mar = c(1, 1, 3, 1),
+  )
+}
+
+```
+
+## Table Outputs 
+
+```{r, results = 'asis'}
+for (regime in Regimes) {
+  cat("### Performance in", regime, "\n\n")
+  
+  performance_df <- results$performance[[regime]]
+  colnames(performance_df)[1] <- "country"
+  
+  output <- performance_df %>%
+  left_join(Trade_data_summary %>% dplyr::select(country, Mean), by = "country") %>%
+    rename(Avg.Trade.Balance = Mean) %>%
+    mutate(Avg.Trade.Balance = round(Avg.Trade.Balance,2)) %>%
+  mutate(Avg.Trade.Balance = ifelse(is.na(Avg.Trade.Balance), "/", Avg.Trade.Balance))
+  
+  
+  rownames(output) <- NULL
+  
+  print(knitr::kable(
+    output,
+    digits = 3,
+    caption = paste("Country Performance in", regime, "regime")
+  ))
+  # Page break after each table (except the last)
+    if(regime != tail(Regimes, 1)) {
+    cat("\\newpage\n\n")
+    }
+  
+}
+
+```
+
+## Plot Correlation to USA
+
+```{r}
+us_cor_df <- lapply(Regimes, function(regime) {
+  mat <- results$correlation[[regime]]
+  if (is.null(mat)) return(NULL)
+  cor_us <- mat[, "USA"]
+  data.frame(
+    ETF = names(cor_us),
+    Correlation = cor_us,
+    Regime = regime
+  )
+}) %>% bind_rows()
+
+pheatmap(
+  pivot_wider(us_cor_df, names_from = Regime, values_from = Correlation) %>%
+    column_to_rownames("ETF"),
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  main = "U.S. Correlation by Regime"
+)
+```
+## Plot Portfolio Weights
+
+```{r}
+portfolio_list_renamed <- imap(results$portfolio, ~ rename(.x, !!.y := Weights))
+portfolio_merged <- reduce(portfolio_list_renamed, full_join, by = "ETF")
+
+## Bar Chart
+portfolio_merged_long <- pivot_longer(portfolio_merged,cols = -ETF, names_to = "Portfolio", values_to = "Weight")
+ggplot(portfolio_merged_long, aes(x = ETF, y = Weight, fill = Portfolio)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  labs(title = "Portfolio Weights by Country", y = "Weight", x = "Asset Class") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    plot.title = element_text(hjust = 0.5)
+  ) +
+  coord_flip()
+```
+
+## Plot Portfolio Performance
+
+```{r}
+Performance_Analysis <- results$portfolio_perf
+rownames(Performance_Analysis) <- NULL
+knitr::kable(cbind(Regimes,Performance_Analysis), digits = 3,
+             caption = "Performance Analysis MVO Portfolios")
+```
+
+
+
+## Explanatory Regression
+
+### Merge Everything and include explanatory variables on monthly basis
+
+```{r include=FALSE}
+
+## Calculate monthly returns
+etf_close_xts_monthly <- apply.monthly(etf_close_xts, first)
+etf_returns_xts_monthly <- ROC(etf_close_xts_monthly, n = 1, type = "discrete")
+
+# Create dataframe with dates labeled as start-of-week
+etf_returns_monthly_df <- data.frame(
+  date = as.Date(as.yearmon(index(etf_returns_xts_monthly)),frac = 0),
+  coredata(etf_returns_xts_monthly)
+)
+
+# Remove NA at the beginning (from ROC calculation)
+etf_returns_monthly_df <- etf_returns_monthly_df[-1, ]
+
+etf_returns_monthly_df < etf_returns_monthly_df[-nrow(etf_returns_monthly_df)]
+
+etf_returns_long_monthly <- etf_returns_monthly_df %>% 
+  pivot_longer(-date,names_to = "country", values_to = "return")
+
+# Combine with the regimes
+
+returns_with_regimes_monthly <- etf_returns_long_monthly %>%
+  left_join(macro_data_df %>% dplyr::select(date,macro_regime,combined_regime, inflation_surprise, FedChange, growth_regime), by = "date")
+
+# Combine with the trade Balance
+
+Trade_data <- Trade_data %>%
+  mutate(
+    date = as.Date(as.yearmon(date),frac = 0),
+    trade_change = (Trade_Balance - lag(Trade_Balance)) / Trade_Balance
+  )
+
+returns_with_regimes_monthly <- returns_with_regimes_monthly  %>%
+  left_join(Trade_data %>% dplyr::select(date,country, trade_change, Trade_Balance), by = c("country","date")) %>%
+  filter(!country %in% c("USA", "Taiwan"),!is.na(macro_regime))
+
+
+
+
+```
+
+
+
+```{r}
+regression_results <- returns_with_regimes_monthly %>%
+  group_by(country) %>%
+  nest() %>%
+  mutate(
+    # Run linear model per country
+    model = map(data, ~ lm(return ~ inflation_surprise + FedChange + growth_regime + trade_change, data = .x)),
+    # Extract coefficients with heteroskedasticity-robust SEs
+    tidy_out = map(model, ~ tidy(.x, se.type = "HC1")),
+    # Extract model-level stats (R², F-statistic, etc.)
+    glance_out = map(model, glance)
+  )
+
+# Unnest tidy results and keep estimate + p-value
+coefficients_df <- regression_results %>%
+  dplyr::select(country, tidy_out) %>%
+  unnest(tidy_out) %>%
+  dplyr::select(country, term, estimate, p.value)
+
+# Pivot estimate and p-value into long format
+coefficients_long <- coefficients_df %>%
+  pivot_longer(cols = c(estimate, p.value),
+               names_to = "stat_type",
+               values_to = "value") %>%
+  mutate(stat_name = paste0(term, "_", stat_type)) %>%
+  dplyr::select(country, stat_name, value)
+
+# Pivot to wide format: one row per country, estimates and p-values side-by-side
+coefs_wide <- coefficients_long %>%
+  pivot_wider(names_from = stat_name, values_from = value)
+
+model_stats_df <- regression_results %>%
+  dplyr::select(country, glance_out) %>%
+  unnest(glance_out) %>%
+  dplyr::select(
+    country,
+    r.squared,
+    adj.r.squared,
+    f_pvalue = p.value
+  )
+
+output <- coefs_wide %>%
+  left_join(model_stats_df, by = "country")
+
+output <- output %>%
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+
+colnames(output) <- c("Country","Inter.", "p-V.", "Infl. Surp.","p-V.", "Fed Change","p-V.", "L.Growth","p-V.", "TB Change","p-V.", "R^2","F-T.","p-V.")
+
+# Step 7: Table output
+knitr::kable(output, caption = "Explanatory Regression by Country") %>%
+  kable_styling(latex_options = c("scale_down"), font_size = 6)
+
+```
+
+## Split the regression into multiple Regimes
+
+```{r}
+# Step 1: Fit model per country and regime
+regression_results <- returns_with_regimes_monthly %>%
+  group_by(country, macro_regime) %>%
+  nest() %>%
+  mutate(
+    model = map(data, ~ lm(return ~ inflation_surprise + FedChange + Trade_Balance, data = .x)),
+    tidy_out = map(model, ~ tidy(.x, se.type = "HC1")),
+    glance_out = map(model, glance)
+  )
+
+# Step 2: Extract tidy (coefficients) and pivot wide
+tidy_df <- regression_results %>%
+  dplyr::select(country, macro_regime, tidy_out) %>%
+  unnest(tidy_out) %>%
+  dplyr::select(country, macro_regime, term, estimate, p.value)
+
+coefs_df <- tidy_df %>%
+  pivot_wider(
+    names_from = term,
+    values_from = c(estimate, p.value),
+    names_glue = "{term}_{.value}"
+  )
+
+# Step 3: Extract model-level stats
+glance_df <- regression_results %>%
+  dplyr::select(country, macro_regime, glance_out) %>%
+  unnest(glance_out) %>%
+  dplyr::select(country, macro_regime, r.squared, adj.r.squared, statistic, p.value) %>%
+  rename(
+    R_squared = r.squared,
+    Adj_R_squared = adj.r.squared,
+    F_statistic = statistic,
+    F_p_value = p.value
+  )
+
+# Step 4: Join and format output
+output <- coefs_df %>%
+  left_join(glance_df, by = c("country", "macro_regime")) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 3))) %>%
+  arrange(country, macro_regime)
+
+# Step 5: Output as table (optional: use kableExtra for better formatting)
+knitr::kable(output, caption = "Explanatory Regressions by Country and Regime") %>%
+kable_styling(latex_options = c("scale_down"), font_size = 8)
+```
+#################################################################################
+# Fama French Factors
+#################################################################################
+
+### Download the data from Fama French
+
+```{r}
+start_date_famafrench <- as.Date("1954-08-01")
+
+start_date_famafrench <- as.Date("1954-08-01")
+
+################# Size - Book to Market ######################################
+
+# 1. Download daily Fama-French portfolios
+ff3_ports_raw_sb <- download_french_data("6 Portfolios Formed on Size and Book-to-Market (2 x 3) [Daily]")
+ff3_tbl_sb <- ff3_ports_raw_sb$subsets$data[[1]]
+
+# 2. Clean and transform
+colnames(ff3_tbl_sb) <- c("date", "Small_Low.B/M", "Small_Mid.B/M", "Small_High.B/M",
+                             "Big_Low.B/M", "Big_Mid.B/M", "Big_High.B/M")
+
+ff_ports_daily_sb <- ff3_tbl_sb %>%
+  # Convert date from integer YYYYMMDD to proper Date format
+  mutate(date = ymd(as.character(date))) %>%
+  # Convert returns from percent to decimal
+  mutate(across(-date, ~ as.numeric(.) / 100)) %>%
+  # Rename columns to lowercase for consistency
+  rename_with(str_to_lower) %>%
+  # Filter by start date
+  filter(date >= start_date_famafrench)
+
+# 3. Convert to xts object
+ff_xts_sb <- xts(ff_ports_daily_sb %>% dplyr::select(-date), order.by = ff_ports_daily_sb$date)
+
+# 4. Convert to weekly returns (simple or log)
+ff_weekly_sb <- apply.weekly(ff_xts_sb, Return.cumulative)  # Or use Return.calculate for log returns
+
+# Create dataframe with dates labeled as start-of-week
+ff_size_book <- data.frame(
+  date = floor_date(index(ff_weekly_sb), unit = "week", week_start = 1),
+  coredata(ff_weekly_sb)
+)
+
+########################## Size Momentum ######################################
+
+
+# 1. Download daily Fama-French portfolios
+ff3_ports_raw_sm <- download_french_data("6 Portfolios Formed on Size and Momentum (2 x 3) [Daily]")
+ff3_tbl_sm <- ff3_ports_raw_sm$subsets$data[[1]]
+
+# 2. Clean and transform
+colnames(ff3_tbl_sm) <- c("date", "Small_Low.Mom", "Small_Mid.Mom", "Small_High.Mom",
+                             "Big_Low.Mom", "Big_Mid.Mom", "Big_High.Mom")
+
+ff_ports_daily_sm <- ff3_tbl_sm %>%
+  # Convert date from integer YYYYMMDD to proper Date format
+  mutate(date = ymd(as.character(date))) %>%
+  # Convert returns from percent to decimal
+  mutate(across(-date, ~ as.numeric(.) / 100)) %>%
+  # Rename columns to lowercase for consistency
+  rename_with(str_to_lower) %>%
+  # Filter by start date
+  filter(date >= start_date_famafrench)
+
+# 3. Convert to xts object
+ff_xts_sm <- xts(ff_ports_daily_sm %>% dplyr::select(-date), order.by = ff_ports_daily_sm$date)
+
+# 4. Convert to weekly returns (simple or log)
+ff_weekly_sm <- apply.weekly(ff_xts_sm, Return.cumulative)  # Or use Return.calculate for log returns
+
+# Create dataframe with dates labeled as start-of-week
+ff_size_mom <- data.frame(
+  date = floor_date(index(ff_weekly_sm), unit = "week", week_start = 1),
+  coredata(ff_weekly_sm)
+)
+
+ff_portfolios <- ff_size_mom %>%
+  left_join(ff_size_book, by = "date")
+
+```
+
+### Combine
+
+```{r}
+
+ff_portfolios <- ff_portfolios %>%
+  mutate(month_date = floor_date(date, "month"))
+
+
+ff_ports_long <- ff_portfolios %>%
+  pivot_longer(-c(date, month_date), names_to = "Portfolio", values_to = "return")
+
+# Merge the data
+ff_returns_with_regimes <- ff_ports_long %>%
+  left_join(
+    macro_data_df %>%
+      dplyr::select(date, macro_regime,combined_regime) %>%
+      rename(month_date = date),
+    by = "month_date") %>%
+  dplyr::select(-month_date)
+
+
+ff_returns_with_regimes <- ff_returns_with_regimes %>%
+  filter(date >= as.Date("1990-02-01")) %>%
+  filter(!is.na(macro_regime))
+ 
+
+knitr:: kable(ff_returns_with_regimes %>%
+  group_by(macro_regime) %>%
+  summarise(n_obs = sum(!is.na(return))))
+
+```
+
+## Portfolio Analysis
+
+### Portfolio
+
+```{r}
+summarise_regime <- function(data, regime_name) {
+  
+  performance_list <- list()
+  correlation_list <- list()
+  portfolio_list <- list()
+  
+  Port_Ret <- numeric()
+  Port_Sd <- numeric()
+  Port_Sharpe <- numeric()
+  
+  data <- as_tibble(data)
+  
+  for(regime in regime_name){
+  df <- data %>%
+    filter(macro_regime == regime) %>%
+    dplyr::select(date, Portfolio, return) %>%
+    pivot_wider(names_from = Portfolio, values_from = return)
+  
+   # Keep only ETFs with at least some data
+  valid_cols <- colSums(!is.na(df[ , -1])) > 0
+  df <- df[ , c(TRUE, valid_cols)]  
+  df <- df[rowSums(is.na(df[ , -1])) < ncol(df) - 1, ]
+  
+  #Annualized stats
+  returns_mat <- as.matrix(df[ , -1])
+  returns_mat <- returns_mat[ , colSums(!is.na(returns_mat)) >= 52]
+  mean_returns <- colMeans(returns_mat, na.rm = TRUE) * 52
+  sd_returns <- apply(returns_mat, 2, sd,na.rm = TRUE) * sqrt(52)
+  sharpe_ratios <- mean_returns / sd_returns
+  
+  # Assemble summary table
+  perf_df <- data.frame(
+    Portfolios = colnames(returns_mat),
+    AnnualReturn = round(mean_returns, 4),
+    AnnualVolatility = round(sd_returns, 4),
+    Sharpe = round(sharpe_ratios, 2)
+  ) %>%
+    arrange(desc(Sharpe))
+  
+  performance_list[[regime]] <- perf_df
+  
+  ### Correlation ###
+  corr_matrix <- round(cor(returns_mat, use = "pairwise.complete.obs"), 2)
+  
+  correlation_list[[regime]] <- corr_matrix
+  
+ ### Mean-Variance Portfolio Optimization ###
+  
+  # Expectation and Covariance Matrix
+  returns_mat <- as.matrix(remove_na_heavy(as.data.frame(returns_mat), row_thresh = 0.5,
+                                           col_thresh = 0.3,interpolate = TRUE))
+  
+  mu <- colMeans(returns_mat, na.rm = TRUE) * 52
+  Sigma <- cov(returns_mat, use = "pairwise.complete.obs") * 52
+  # Dmat and dvec for solve.QP
+  Dmat <- 2 * Sigma  # QP minimizes (1/2) * w' D w, so we multiply by 2
+  dvec <- rep(0, length(mu))
+  
+  # Constraints: sum(weights) = 1, and weights >= 0
+  n_assets <- length(mu)
+  # Equality constraint: sum(weights) = 1
+  A_eq <- matrix(1, nrow = n_assets, ncol = 1)
+  # Inequality constraints: weights >= 0
+  A_ineq <- diag(n_assets)
+  # Combine constraint matrix
+  Amat <- cbind(A_eq, A_ineq)  # Each column is a constraint
+  # Right-hand side of constraints
+  bvec <- c(1, rep(0, n_assets))  # sum(weights) = 1 and weights >= 0
+  # Solve QP
+  sol <- solve.QP(Dmat, dvec, Amat, bvec, meq = 1)
+  
+  weights <- sol$solution
+  
+  port_ret <- as.numeric(t(weights) %*% mu)
+  port_var <- as.numeric(t(weights) %*% Sigma %*% weights)
+  port_sd <- sqrt(pmax(port_var, 0))
+  port_sharpe <- port_ret / port_sd
+
+  mean_var_df <- data.frame(
+    ETF = colnames(returns_mat),
+    Weights = round(as.numeric(weights), 6)
+  )
+  
+  Port_Ret[regime] <- port_ret
+  Port_Sd[regime] <- port_sd
+  Port_Sharpe[regime] <- port_sharpe
+  portfolio_list[[regime]] <- mean_var_df
+  
+  }
+
+  port_per_df <- data.frame(
+    Regime = names(Port_Ret),
+    Portfolio_Return = Port_Ret,
+    Portfolio_SD = Port_Sd,
+    Portfolio_Sharpe = Port_Sharpe
+  )
+
+
+  return(list(
+    performance = performance_list,
+    correlation = correlation_list,
+    portfolio =  portfolio_list,
+    portfolio_perf = port_per_df
+  ))
+}
+
+```
+
+
+```{r,results = 'asis'}
+
+portfolio_results <- summarise_regime(ff_returns_with_regimes, Regimes)
+
+for (regime in Regimes) {
+  
+  output <- portfolio_results$performance[[regime]]
+  rownames(output) <- NULL
+  
+  cat("\\newpage\n\n")
+  
+  print(knitr::kable(
+    output,
+    digits = 3,
+    caption = paste("FF Double Sort Portfolios Perf. in", regime, "regime")
+  ))
+  # Page break after each table (except the last)
+    if(regime != tail(Regimes, 1)) {
+    cat("\\newpage\n\n")
+    }
+}
+```
+
+#################################################################################
+# Global Factor Data Base
+#################################################################################
+
+## Data Download 
+
+```{r}
+# Create Monthly Returns 
+```
+
+## Data Merging with Global Macro Data
+
+```{r}
+# Example from the Fama French Factors 
+
+ff_returns_with_regimes <- ff_ports_long %>%
+  left_join(
+    macro_data_df %>%
+      dplyr::select(date, macro_regime,combined_regime) %>%
+      rename(month_date = date),
+    by = "month_date") %>%
+  dplyr::select(-month_date)
+
+
+ff_returns_with_regimes <- ff_returns_with_regimes %>%
+  filter(date >= as.Date("1990-02-01")) %>%
+  filter(!is.na(macro_regime))
+ 
+
+knitr:: kable(ff_returns_with_regimes %>%
+  group_by(macro_regime) %>%
+  summarise(n_obs = sum(!is.na(return))))
+```
+
+### Analysis
+
+```{r, results = 'asis'}
+# Summarise_regime is a function introduced earlier in this document 
+
+portfolio_results <- summarise_regime(ff_returns_with_regimes, Regimes)
+
+for (regime in Regimes) {
+  
+  output <- portfolio_results$performance[[regime]]
+  rownames(output) <- NULL
+  
+  cat("\\newpage\n\n")
+  
+  print(knitr::kable(
+    output,
+    digits = 3,
+    caption = paste("FF Double Sort Portfolios Perf. in", regime, "regime")
+  ))
+  # Page break after each table (except the last)
+    if(regime != tail(Regimes, 1)) {
+    cat("\\newpage\n\n")
+    }
+}
+```
+
+## Outputs
+
+### Plot Correlations
+
+```{r, fig.width=8, fig.height=8}
+for (regime in Regimes) {
+  corr_matrix <- results$correlation[[regime]]
+  
+  corrplot(
+    corr_matrix,
+    method = "color",
+    type = "upper",
+    order = "hclust",
+    addCoef.col = "black",
+    tl.cex = 0.7,         # Smaller label size
+    number.cex = 0.6,     # Smaller number size
+    col = colorRampPalette(c("blue", "white", "red"))(200),
+    cl.pos = "n",
+    title = paste("Correlation –", regime),
+     mar = c(1, 1, 3, 1),
+  )
+}
+```
+
+
+### Plot Portfolio Weights
+
+```{r}
+portfolio_list_renamed <- imap(results$portfolio, ~ rename(.x, !!.y := Weights))
+portfolio_merged <- reduce(portfolio_list_renamed, full_join, by = "ETF")
+
+## Bar Chart
+portfolio_merged_long <- pivot_longer(portfolio_merged,cols = -ETF, names_to = "Portfolio", values_to = "Weight")
+ggplot(portfolio_merged_long, aes(x = ETF, y = Weight, fill = Portfolio)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  labs(title = "Portfolio Weights by Country", y = "Weight", x = "Asset Class") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    plot.title = element_text(hjust = 0.5)
+  ) +
+  coord_flip()
+```
+
+### Plot Portfolio Performance
+
+```{r}
+Performance_Analysis <- results$portfolio_perf
+rownames(Performance_Analysis) <- NULL
+knitr::kable(cbind(Regimes,Performance_Analysis), digits = 3,
+             caption = "Performance Analysis MVO Portfolios")
+```
