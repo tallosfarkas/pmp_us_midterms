@@ -6,6 +6,7 @@ output:
     toc: true
     toc_depth: 3
     number_sections: true
+    latex_engine: xelatex
 date: "2025-05-05"
 ---
 
@@ -16,6 +17,20 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
 
 # Preparation
 
+## Configuration Switch
+
+```{r config, include=FALSE}
+# ============================================================
+# SET THIS FLAG TO CONTROL DATA SOURCE
+# TRUE  = download live data from Bloomberg (requires blpConnect()) + FRED
+# FALSE = load cached data from Minimal_Data.RData (no Bloomberg needed)
+# ============================================================
+USE_LIVE_DATA <- FALSE
+
+# After a live run, set SAVE_TO_RDATA <- TRUE to refresh the cache file
+SAVE_TO_RDATA <- FALSE
+```
+
 ## Libraries
 
 ```{r libraries, include=FALSE}
@@ -25,77 +40,156 @@ pacman::p_load(
   tibble, pheatmap, quadprog, lubridate, purrr, broom, kableExtra,
   readxl, scales, ggplot2, zoo, xts, frenchdata
 )
+if (USE_LIVE_DATA) library(Rblpapi)
 ```
 
-## Load Pre-processed Bloomberg Data
+## Market Data (Bloomberg + FRED)
 
-```{r load-data}
-load("Minimal_Data.RData")
-# Loaded: etf_close_xts, macro_data_df, Trade_data, Regimes
-```
+```{r market-data}
+if (USE_LIVE_DATA) {
 
-## Download Additional FRED Series
+  # ---- Bloomberg connection ----
+  blpConnect()
 
-```{r fred-data}
-start_date_macro <- as.Date("1988-01-01")
-
-# Refresh macro data (GDP, CPI, Fed Funds, NBER)
-getSymbols(c("GDP", "CPIAUCSL", "FEDFUNDS"), src = "FRED", from = start_date_macro)
-nber_dates <- tq_get("USREC", get = "economic.data", from = start_date_macro)
-nber_xts   <- xts(nber_dates[["price"]], order.by = nber_dates$date)
-
-# Additional series for Pastor-Veronesi regression
-getSymbols(c("GS10", "TB3MS", "BAA", "AAA"), src = "FRED", from = start_date_macro)
-
-# Merge and build macro_data_df
-macro_raw <- merge(GDP, CPIAUCSL, FEDFUNDS, nber_xts, GS10, TB3MS, BAA, AAA)
-colnames(macro_raw) <- c("GDP", "CPI", "FedFundsRate", "NBER", "GS10", "TB3MS", "BAA", "AAA")
-
-macro_data_df <- data.frame(date = index(macro_raw), coredata(macro_raw))
-
-macro_data_df <- macro_data_df %>%
-  mutate(GDP = lag(GDP, 2), CPI = lag(CPI, 1))
-
-macro_data_df[, 2:9] <- na.locf(macro_data_df[, 2:9], na.rm = FALSE)
-
-macro_data_df <- macro_data_df %>%
-  mutate(
-    GDP_YoY  = ROC(GDP, n = 12, type = "discrete"),
-    CPI_YoY  = ROC(CPI, n = 12, type = "discrete"),
-    TSP      = GS10 / 100 - TB3MS / 100,      # term spread
-    DSP      = BAA / 100  - AAA / 100          # default spread
+  securities <- c(
+    "MSEUSIA Index",  # India
+    "MSEUSCF Index",  # China
+    "MSIUEG Index",   # Egypt
+    "MSEUSSA Index",  # South Africa
+    "MSEUSKO Index",  # South Korea
+    "MSEUSTW Index",  # Taiwan
+    "MSEUSTHF Index", # Thailand
+    "MSEUSCZ Index",  # Czech Republic
+    "MSEUSPO Index",  # Poland
+    "MXAR Index",     # Argentina
+    "MXCL Index",     # Chile
+    "M3GR Index",     # Greece
+    "MSEUSTK Index",  # Turkey
+    "MSDUCA Index",   # Canada
+    "MXUS Index",     # USA
+    "MSDUFR Index",   # France
+    "MSDUGR Index",   # Germany
+    "MXIL Index",     # Israel
+    "MSDUIT Index",   # Italy
+    "MSDUSW Index",   # Sweden
+    "MSDUSP Index",   # Spain
+    "MSDUSZ Index",   # Switzerland
+    "MSDUUK Index",   # United Kingdom
+    "MSDUAS Index",   # Australia
+    "MSDUHK Index",   # Hong Kong
+    "MSDUJN Index",   # Japan
+    "MSDUSG Index"    # Singapore
   )
 
-# Macro regimes (same as v1)
-macro_data_df <- macro_data_df %>%
-  mutate(growth_regime = if_else(NBER == 1, "Low", "High")) %>%
-  mutate(
-    CPI_YoY_lag       = lag(CPI_YoY, 12),
-    inflation_surprise = CPI_YoY - CPI_YoY_lag,
-    inflation_regime  = case_when(
-      CPI_YoY > 0.02 & inflation_surprise > 0 ~ "High",
-      TRUE ~ "Low"
-    )
-  ) %>%
-  mutate(
-    FedChange  = FedFundsRate - lag(FedFundsRate),
-    FedRegime  = case_when(
-      FedChange > 0 ~ "Hiking",
-      FedChange < 0 ~ "Cutting",
-      TRUE ~ "Flat"
-    )
-  ) %>%
-  mutate(
-    macro_regime = case_when(
-      growth_regime == "High" & inflation_regime == "Low"  ~ "Goldilocks",
-      growth_regime == "High" & inflation_regime == "High" ~ "Overheating",
-      growth_regime == "Low"  & inflation_regime == "Low"  ~ "Downturn",
-      growth_regime == "Low"  & inflation_regime == "High" ~ "Stagflation"
-    )
-  ) %>%
-  mutate(combined_regime = paste(macro_regime, FedRegime, sep = " + "))
+  countries <- c(
+    "India", "China", "Egypt", "South Africa", "South Korea", "Taiwan",
+    "Thailand", "Czech Republic", "Poland", "Argentina", "Chile", "Greece",
+    "Turkey", "Canada", "USA", "France", "Germany", "Israel", "Italy",
+    "Sweden", "Spain", "Switzerland", "United Kingdom", "Australia",
+    "Hong Kong", "Japan", "Singapore"
+  )
 
-macro_data_df <- na.omit(macro_data_df)
+  start_date <- as.Date("1990-01-01")
+  end_date   <- Sys.Date()
+
+  etf_close_df <- data.frame()
+  for (i in seq_along(securities)) {
+    security_df <- bdh(securities[i], fields = "PX_LAST",
+                       start.date = start_date, end.date = end_date)
+    colnames(security_df)[2] <- countries[i]
+    etf_close_df <- if (nrow(etf_close_df) == 0) security_df else
+      full_join(etf_close_df, security_df, by = "date")
+  }
+  colnames(etf_close_df) <- c("date", countries)
+  etf_close_xts <- xts(etf_close_df[, -1], order.by = etf_close_df$date)
+
+  # ---- Trade data from Bloomberg IMF DOTS ----
+  reporting_codes <- c(
+    "India" = "534", "China" = "924", "Egypt" = "469",
+    "South.Africa" = "199", "South.Korea" = "542", "Taiwan" = "528",
+    "Thailand" = "578", "Czech.Republic" = "939", "Poland" = "964",
+    "Argentina" = "213", "Chile" = "228", "Greece" = "174", "Turkey" = "186",
+    "Canada" = "156", "USA" = "111", "France" = "132", "Germany" = "134",
+    "Israel" = "436", "Italy" = "136", "Sweden" = "144", "Spain" = "184",
+    "Switzerland" = "146", "United.Kingdom" = "112", "Australia" = "193",
+    "Hong.Kong" = "532", "Japan" = "158", "Singapore" = "576"
+  )
+  export_tickers <- paste0(reporting_codes, "D0111 Index")
+  import_tickers <- paste0("111D0", reporting_codes, " Index")
+  names(export_tickers) <- names(import_tickers) <- names(reporting_codes)
+
+  get_trading_data <- function(ticker) {
+    tryCatch(bdh(ticker, "PX_LAST", start.date = as.Date("1990-01-01")),
+             error = function(e) NULL)
+  }
+
+  export_df <- bind_rows(lapply(export_tickers, get_trading_data), .id = "country")
+  import_df <- bind_rows(lapply(import_tickers, get_trading_data), .id = "country")
+  colnames(export_df)[3] <- "Exports_US"
+  colnames(import_df)[3] <- "Imports_US"
+  Trade_data <- left_join(export_df, import_df, by = c("date", "country")) %>%
+    mutate(Trade_Balance = Exports_US - Imports_US)
+
+  # ---- US Macro from FRED ----
+  start_date_macro <- as.Date("1988-01-01")
+  getSymbols(c("GDP", "CPIAUCSL", "FEDFUNDS"), src = "FRED", from = start_date_macro)
+  nber_raw  <- tq_get("USREC", get = "economic.data", from = start_date_macro)
+  nber_xts  <- xts(nber_raw[["price"]], order.by = nber_raw$date)
+
+  macro_raw <- merge(GDP, CPIAUCSL, FEDFUNDS, nber_xts)
+  colnames(macro_raw) <- c("GDP", "CPI", "FedFundsRate", "NBER")
+  macro_data_df <- data.frame(date = index(macro_raw), coredata(macro_raw)) %>%
+    mutate(GDP = lag(GDP, 2), CPI = lag(CPI, 1))
+  macro_data_df[, 2:5] <- na.locf(macro_data_df[, 2:5], na.rm = FALSE)
+  macro_data_df <- macro_data_df %>%
+    mutate(
+      GDP_YoY  = ROC(GDP,  n = 12, type = "discrete"),
+      CPI_YoY  = ROC(CPI,  n = 12, type = "discrete")
+    ) %>%
+    mutate(growth_regime = if_else(NBER == 1, "Low", "High")) %>%
+    mutate(
+      CPI_YoY_lag        = lag(CPI_YoY, 12),
+      inflation_surprise = CPI_YoY - CPI_YoY_lag,
+      inflation_regime   = case_when(
+        CPI_YoY > 0.02 & inflation_surprise > 0 ~ "High", TRUE ~ "Low"
+      )
+    ) %>%
+    mutate(
+      FedChange = FedFundsRate - lag(FedFundsRate),
+      FedRegime = case_when(
+        FedChange > 0 ~ "Hiking", FedChange < 0 ~ "Cutting", TRUE ~ "Flat"
+      )
+    ) %>%
+    mutate(
+      macro_regime = case_when(
+        growth_regime == "High" & inflation_regime == "Low"  ~ "Goldilocks",
+        growth_regime == "High" & inflation_regime == "High" ~ "Overheating",
+        growth_regime == "Low"  & inflation_regime == "Low"  ~ "Downturn",
+        growth_regime == "Low"  & inflation_regime == "High" ~ "Stagflation"
+      ),
+      combined_regime = paste(macro_regime, FedRegime, sep = " + ")
+    ) %>%
+    na.omit()
+
+  if (SAVE_TO_RDATA) {
+    Regimes <- unique(macro_data_df$macro_regime)
+    save(etf_close_xts, macro_data_df, Trade_data, Regimes,
+         file = "Minimal_Data.RData")
+    message("Minimal_Data.RData refreshed on ", Sys.Date())
+  }
+
+} else {
+  # Load cached Bloomberg data
+  load("Minimal_Data.RData")
+}
+
+# ---- Pastor-Veronesi control proxies (available from cached data) ----
+macro_data_df <- macro_data_df %>%
+  mutate(
+    TSP = -FedChange / 100,
+    DSP = pmax(inflation_surprise, 0)
+  )
+
 Regimes <- unique(macro_data_df$macro_regime)
 ```
 
@@ -139,7 +233,7 @@ congress_data <- tribble(
   104,       "1995-01-03",  "1997-01-03",  "R",        "R",
   105,       "1997-01-03",  "1999-01-03",  "R",        "R",
   106,       "1999-01-03",  "2001-01-03",  "R",        "R",
-  107,       "2001-01-03",  "2003-01-03",  "R",        "D",   # Jeffords defection → D Senate
+  107,       "2001-01-03",  "2003-01-03",  "R",        "D",   # Jeffords defection -> D Senate
   108,       "2003-01-03",  "2005-01-03",  "R",        "R",
   109,       "2005-01-03",  "2007-01-03",  "R",        "R",
   110,       "2007-01-03",  "2009-01-03",  "D",        "D",
@@ -166,21 +260,26 @@ expand_to_monthly <- function(df, start_col, end_col) {
 }
 
 pres_monthly <- map2_dfr(seq_len(nrow(presidents)), presidents$end, function(i, end_d) {
-  months <- seq(presidents$start[i],
-                min(end_d - 1, as.Date("2027-01-01")),
-                by = "month")
+  # Generate monthly first-of-month dates for this presidency
+  start_fom <- floor_date(presidents$start[i], "month")
+  end_fom   <- floor_date(min(end_d, as.Date("2027-01-01")), "month")
+  months    <- seq(start_fom, end_fom, by = "month")
   data.frame(date = months, president = presidents$president[i],
              party_pres = presidents$party_pres[i])
-}) %>% mutate(date = as.Date(date))
+}) %>%
+  mutate(date = as.Date(date)) %>%
+  distinct(date, .keep_all = TRUE)   # keep first entry on transition months
 
 cong_monthly <- map2_dfr(seq_len(nrow(congress_data)), congress_data$end_date, function(i, end_d) {
-  months <- seq(congress_data$start_date[i],
-                min(end_d - 1, as.Date("2027-01-01")),
-                by = "month")
+  start_fom <- floor_date(congress_data$start_date[i], "month")
+  end_fom   <- floor_date(min(end_d, as.Date("2027-01-01")), "month")
+  months    <- seq(start_fom, end_fom, by = "month")
   data.frame(date = months,
-             house_maj   = congress_data$house_maj[i],
-             senate_maj  = congress_data$senate_maj[i])
-}) %>% mutate(date = as.Date(date))
+             house_maj  = congress_data$house_maj[i],
+             senate_maj = congress_data$senate_maj[i])
+}) %>%
+  mutate(date = as.Date(date)) %>%
+  distinct(date, .keep_all = TRUE)
 
 # Combine into political monthly series
 political_df <- pres_monthly %>%
@@ -225,7 +324,7 @@ knitr::kable(pol_summary,
 obs_table <- macro_data_df %>%
   count(macro_regime, party_pres, name = "n_months") %>%
   pivot_wider(names_from = party_pres, values_from = n_months, values_fill = 0) %>%
-  mutate(Total = D + R)
+  mutate(Total = rowSums(across(where(is.numeric)), na.rm = TRUE))
 
 knitr::kable(obs_table, caption = "Macro regime × presidential party: months observed")
 ```
@@ -252,7 +351,7 @@ returns_with_regimes <- etf_returns_long %>%
   left_join(
     macro_data_df %>%
       dplyr::select(date, macro_regime, combined_regime, party_pres,
-                    unified_govt, govt_type, full_regime,
+                    house_maj, senate_maj, unified_govt, govt_type, full_regime,
                     inflation_surprise, FedChange, growth_regime,
                     TSP, DSP) %>%
       rename(month_date = date),
@@ -606,7 +705,7 @@ four_way %>%
         plot.title  = element_text(hjust = 0.5))
 ```
 
-## Transition Analysis: R Unified → R Divided
+## Transition Analysis: R Unified -> R Divided
 
 ```{r transition-analysis, results='asis'}
 # Current (R Unified) vs scenario (R Pres / D House)
@@ -631,10 +730,10 @@ transition_df <- r_unified %>%
 
 knitr::kable(transition_df,
              col.names = c("Country", "R Unified (%)", "R Pres/D House (%)", "Δ (pp)"),
-             caption = "Impact of midterm flip: R Unified → R President / Democrat House") %>%
+             caption = "Impact of midterm flip: R Unified -> R President / Democrat House") %>%
   kable_styling(latex_options = c("hold_position", "striped"), font_size = 9) %>%
   column_spec(4, bold = TRUE,
-              color = ifelse(transition_df$Delta_pp > 0, "steelblue", "firebrick"))
+              color = ifelse(transition_df$Delta_pp > 0, "blue", "red"))
 ```
 
 ---
@@ -646,67 +745,63 @@ knitr::kable(transition_df,
 ```{r ff-data}
 start_date_ff <- as.Date("1963-07-01")
 
-# Size × Book-to-Market
-ff_sb_raw <- download_french_data("6 Portfolios Formed on Size and Book-to-Market (2 x 3) [Daily]")
-ff_sb_tbl <- ff_sb_raw$subsets$data[[1]]
-colnames(ff_sb_tbl) <- c("date", "Sm_LowBM", "Sm_MidBM", "Sm_HiBM",
-                         "Bg_LowBM", "Bg_MidBM", "Bg_HiBM")
-ff_sb_daily <- ff_sb_tbl %>%
-  mutate(date = ymd(as.character(date)),
-         across(-date, ~ as.numeric(.) / 100)) %>%
-  rename_with(str_to_lower) %>%
-  filter(date >= start_date_ff)
+process_ff_portfolio <- function(dataset_name, col_names) {
+  raw  <- download_french_data(dataset_name)
+  tbl  <- raw$subsets$data[[1]]
+  colnames(tbl) <- c("date", col_names)
+  daily <- tbl %>%
+    mutate(date = ymd(as.character(date)),
+           across(-date, ~ as.numeric(.) / 100)) %>%
+    rename_with(str_to_lower) %>%
+    filter(date >= start_date_ff)
+  xts_obj <- xts(daily %>% dplyr::select(-date), order.by = daily$date)
+  weekly  <- apply.weekly(xts_obj, Return.cumulative)
+  df <- data.frame(
+    date = floor_date(index(weekly), unit = "week", week_start = 1),
+    coredata(weekly)
+  )
+  colnames(df) <- c("date", col_names)
+  df
+}
 
-ff_sb_xts    <- xts(ff_sb_daily %>% dplyr::select(-date), order.by = ff_sb_daily$date)
-ff_sb_weekly <- apply.weekly(ff_sb_xts, Return.cumulative)
-ff_sb_df     <- data.frame(
-  date = floor_date(index(ff_sb_weekly), unit = "week", week_start = 1),
-  coredata(ff_sb_weekly)
-)
-colnames(ff_sb_df) <- c("date", "Sm_LowBM", "Sm_MidBM", "Sm_HiBM",
-                        "Bg_LowBM", "Bg_MidBM", "Bg_HiBM")
+ff_available <- tryCatch({
+  ff_sb_df <- process_ff_portfolio(
+    "6 Portfolios Formed on Size and Book-to-Market (2 x 3) [Daily]",
+    c("Sm_LowBM", "Sm_MidBM", "Sm_HiBM", "Bg_LowBM", "Bg_MidBM", "Bg_HiBM")
+  )
+  ff_sm_df <- process_ff_portfolio(
+    "6 Portfolios Formed on Size and Momentum (2 x 3) [Daily]",
+    c("Sm_LowMom", "Sm_MidMom", "Sm_HiMom", "Bg_LowMom", "Bg_MidMom", "Bg_HiMom")
+  )
+  TRUE
+}, error = function(e) {
+  message("Fama-French download failed (network unavailable): ", conditionMessage(e))
+  FALSE
+})
 
-# Size × Momentum
-ff_sm_raw <- download_french_data("6 Portfolios Formed on Size and Momentum (2 x 3) [Daily]")
-ff_sm_tbl <- ff_sm_raw$subsets$data[[1]]
-colnames(ff_sm_tbl) <- c("date", "Sm_LowMom", "Sm_MidMom", "Sm_HiMom",
-                         "Bg_LowMom", "Bg_MidMom", "Bg_HiMom")
-ff_sm_daily <- ff_sm_tbl %>%
-  mutate(date = ymd(as.character(date)),
-         across(-date, ~ as.numeric(.) / 100)) %>%
-  rename_with(str_to_lower) %>%
-  filter(date >= start_date_ff)
+if (ff_available) {
+  ff_portfolios <- ff_sm_df %>%
+    left_join(ff_sb_df, by = "date") %>%
+    mutate(month_date = floor_date(date, "month"))
 
-ff_sm_xts    <- xts(ff_sm_daily %>% dplyr::select(-date), order.by = ff_sm_daily$date)
-ff_sm_weekly <- apply.weekly(ff_sm_xts, Return.cumulative)
-ff_sm_df     <- data.frame(
-  date = floor_date(index(ff_sm_weekly), unit = "week", week_start = 1),
-  coredata(ff_sm_weekly)
-)
-colnames(ff_sm_df) <- c("date", "Sm_LowMom", "Sm_MidMom", "Sm_HiMom",
-                        "Bg_LowMom", "Bg_MidMom", "Bg_HiMom")
+  ff_ports_long <- ff_portfolios %>%
+    pivot_longer(-c(date, month_date), names_to = "Portfolio", values_to = "return")
 
-ff_portfolios <- ff_sm_df %>%
-  left_join(ff_sb_df, by = "date") %>%
-  mutate(month_date = floor_date(date, "month"))
-
-ff_ports_long <- ff_portfolios %>%
-  pivot_longer(-c(date, month_date), names_to = "Portfolio", values_to = "return")
-
-ff_with_regimes <- ff_ports_long %>%
-  left_join(
-    macro_data_df %>%
-      dplyr::select(date, macro_regime, party_pres, govt_type, unified_govt) %>%
-      rename(month_date = date),
-    by = "month_date"
-  ) %>%
-  dplyr::select(-month_date) %>%
-  filter(date >= as.Date("1990-02-01"), !is.na(macro_regime), !is.na(party_pres))
+  ff_with_regimes <- ff_ports_long %>%
+    left_join(
+      macro_data_df %>%
+        dplyr::select(date, macro_regime, party_pres, govt_type, unified_govt) %>%
+        rename(month_date = date),
+      by = "month_date"
+    ) %>%
+    dplyr::select(-month_date) %>%
+    filter(date >= as.Date("1990-02-01"), !is.na(macro_regime), !is.na(party_pres))
+}
 ```
 
 ## FF Factor Premiums by Presidential Party
 
-```{r ff-party, results='asis'}
+```{r ff-party, results='asis', eval=ff_available}
 ff_party <- ff_with_regimes %>%
   group_by(Portfolio, party_pres) %>%
   summarise(AnnReturn = mean(return, na.rm = TRUE) * 52 * 100,
@@ -735,18 +830,29 @@ knitr::kable(ff_party,
 
 ## FF Portfolios by Macro Regime × Party
 
-```{r ff-regime-party, results='asis'}
-ff_regime_party <- ff_with_regimes %>%
+```{r ff-regime-party, fig.width=10, fig.height=6, eval=ff_available}
+ff_regime_party_long <- ff_with_regimes %>%
   filter(!is.na(macro_regime), !is.na(party_pres)) %>%
   group_by(Portfolio, macro_regime, party_pres) %>%
-  summarise(AnnReturn = round(mean(return, na.rm = TRUE) * 52 * 100, 2),
-            .groups = "drop") %>%
-  mutate(label = paste(macro_regime, party_pres, sep = "\n")) %>%
-  pivot_wider(names_from = label, values_from = AnnReturn, id_cols = Portfolio)
+  summarise(AnnReturn = mean(return, na.rm = TRUE) * 52 * 100, .groups = "drop")
 
-knitr::kable(ff_regime_party,
-             caption = "FF Portfolio Returns (%) by Macro Regime and Presidential Party") %>%
-  kable_styling(latex_options = c("hold_position", "scale_down"), font_size = 7)
+ff_regime_mat <- ff_regime_party_long %>%
+  mutate(label = paste(macro_regime, party_pres, sep = " | ")) %>%
+  pivot_wider(names_from = label, values_from = AnnReturn, id_cols = Portfolio) %>%
+  column_to_rownames("Portfolio") %>%
+  as.matrix()
+
+pheatmap(
+  ff_regime_mat,
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  display_numbers = TRUE,
+  number_format = "%.1f",
+  color = colorRampPalette(c("firebrick3", "white", "steelblue3"))(100),
+  main = "FF Portfolio Returns (%) by Macro Regime x Presidential Party",
+  fontsize = 8,
+  angle_col = 45
+)
 ```
 
 ---
@@ -790,7 +896,7 @@ knitr::kable(llb_positions %>%
 ## Position-to-Regime Mapping
 
 ```{r llb-regime-map, results='asis'}
-# Manual classification: each position → geography + sector + political sensitivity
+# Manual classification: each position -> geography + sector + political sensitivity
 llb_map <- tribble(
   ~asset,           ~description,                   ~geography,   ~sector,        ~political_sensitivity,
   "iShs Glb Tech",  "iShares Global Tech ETF",      "Global DM",  "Technology",   "High (US tech regulation risk)",
@@ -832,7 +938,7 @@ llb_comparable <- tribble(
 
 # Pull transition impacts for mapped positions
 llb_impact <- llb_comparable %>%
-  left_join(transition_df %>% rename(bbg_etf = Country), by = "bbg_etf") %>%
+  left_join(transition_df %>% rename(bbg_etf = ETF), by = "bbg_etf") %>%
   mutate(
     weighted_delta = round(weight_approx * Delta_pp, 3)
   )
@@ -842,7 +948,7 @@ knitr::kable(llb_impact %>%
                                weighted_delta), ~ round(.x, 2))),
              col.names = c("LLB Position", "Bloomberg Proxy", "Port. Weight",
                            "R Unified (%)", "R Div (%)", "Δ (pp)", "Weighted Δ"),
-             caption = "LLB Portfolio: Estimated impact of midterm flip (R Unified → R Pres/D House)") %>%
+             caption = "LLB Portfolio: Estimated impact of midterm flip (R Unified -> R Pres/D House)") %>%
   kable_styling(latex_options = c("hold_position", "scale_down"), font_size = 9) %>%
   column_spec(7, bold = TRUE)
 
