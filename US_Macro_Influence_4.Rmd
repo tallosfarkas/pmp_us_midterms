@@ -15,23 +15,27 @@ knitr::opts_chunk$set(echo = TRUE)
 ### Libraries
 
 ```{r include=FALSE}
-library(quantmod)
-library(dplyr)
-library(tidyquant)
-library(TTR)
-library(tidyr)
-library(corrplot)
-library(MASS)
-library(Rblpapi)
-library(tidyverse)
-library(tibble)
-library(pheatmap)
-library(quadprog)
-library(frenchdata)
-library(lubridate)
-library(purrr)
-library(broom)
-library(kableExtra)
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(
+  quantmod,
+  dplyr,
+  tidyquant,
+  TTR,
+  tidyr,
+  corrplot,
+  MASS,
+  Rblpapi,
+  tidyverse,
+  tibble,
+  pheatmap,
+  quadprog,
+  frenchdata,
+  lubridate,
+  purrr,
+  broom,
+  kableExtra
+)
 
 
 ```
@@ -40,7 +44,7 @@ library(kableExtra)
 ### Get Necessary Data
 
 ```{r}
-load("~/Documents/Wu_Wien/PMP_Capital_Markets_Program /Managers/PMP_GlobalMacro/Minimal_Data.RData")
+load("Minimal_Data.RData")
 ```
 
 
