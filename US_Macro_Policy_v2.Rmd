@@ -1235,40 +1235,129 @@ Based on the regime analysis and forward-looking macro views, the following acti
 
 ---
 
-## Slides 17–18: Implications for AC Portfolio — Position Reasoning
+## Slides 17–18: Implications for AC Portfolio — All Positions, Both Scenarios
 
-**Complete reasoning for each position (for the Reasoning column in the slides):**
+*Each position is assessed under two political scenarios: current R Unified (Trump + R Congress, 2025–Nov 2026) and post-midterm R Pres/D House (if Democrats flip the House in November 2026). Impact levels: **H** = High, **M** = Medium, **L** = Low; direction: **Pos** = Positive, **Neg** = Negative, **Neu** = Neutral.*
 
 ```{r slide-reasoning, results='asis'}
 reasoning_table <- tribble(
-  ~Position,                ~Expected_Impact, ~Reasoning,
-  "Vanguard EM ETF",        "Moderate Risk",  "Tariff-driven USD strength and China slowdown headwinds under Overheating/R Unified. Midterm flip = material relief as gridlock moderates tariff escalation. Largest position — monitor for trim trigger.",
-  "iShs EM Lcl Govt Bond",  "Moderate Risk",  "EM FX and duration sensitive to Fed hold. Carries well if Fed cuts begin H2 2026. Stagflation tail = the key downside scenario. Diversifying vs EM equity.",
-  "iShs Core EUR Govt Bond", "Low / Positive", "ECB cutting cycle more advanced than Fed. Positive duration play with low political sensitivity. Driven by ECB path, not US elections. Hold through easing cycle.",
-  "iShs Global Tech ETF",   "Low / Mixed",    "Overheating regime historically positive for tech earnings (pricing power, AI capex). Political signal mixed: antitrust risk (D House) vs. deregulation (R Unified) roughly offsetting.",
-  "iShs MSCI Europe Mom.",  "Low / Positive", "EU fiscal impulse (Germany EUR 500bn fund, rearmament) supports momentum factor. Partial hedge vs US political risk. Tariff gridlock would reduce EU-US trade tension.",
-  "UBS MSCI Japan ETF",     "Moderate Risk",  "BOJ normalisation = yen appreciation = headwind for unhedged equity. Japan-US tariff negotiation: resolution is upside catalyst. Monitor yen path closely.",
-  "UBS MSCI Switzerland",   "Low Risk",       "Defensive position. CHF safe-haven + low beta. Franc strength = mild return drag but provides portfolio ballast in risk-off scenarios. Intentional risk reducer.",
-  "USD Cash",               "Moderate Risk",  "USD weakness trend (tariff de-dollarization, dollar weaponization rhetoric). Implicit short on EUR appreciation. Rotate to EUR bonds to improve risk-adjusted return.",
-  "UBS MSCI Canada ETF",    "Moderate / Mixed","USMCA uncertainty is the key headwind. Divided government scenario: tariff moderation = Canada relief. Commodity exposure provides inflation hedge.",
-  "Invesco Wind Energy ETF","High Risk (now) / High Upside (D House)","Most politically binary position. R Unified = IRA rollback headwinds, permit delays. D House flip = IRA defense = strong catalyst. Hold small; add on political signal.",
-  "iShs Global Energy ETF", "Low / Mixed",    "Benefits from Republican deregulation (faster permits, pipeline approvals). Counterweight to clean energy. Oil price more driven by OPEC than US politics.",
-  "BETA ETF (WIG20 Poland)","Moderate Risk",  "Poland = NATO/EU aligned. Trump NATO stance creates geopolitical overhang. EU fiscal support and defence spending are positives. EM European political hedge.",
-  "UBS Gold Miners ETF",    "Low / Positive", "Gold at all-time highs driven by de-dollarization and central bank buying. Miners have operational leverage to gold price. Robust thesis across all scenarios.",
-  "Cadeler A/S",            "High Risk (now) / High Upside (D House)","Offshore wind installer with US + EU pipeline. IRA exposure makes it politically binary. EU offshore wind provides floor valuation. Speculative — high vol.",
-  "RS Technologies",        "Neutral",        "Small-cap Japan tech. Limited fundamental data and low liquidity. Idiosyncratic risk. Monitor closely; consider reducing for portfolio construction reasons.",
-  "EUR Cash",               "Positive",       "EUR appreciating vs USD on tariff dynamics. Positive real carry in EUR context. Deploy into EUR bonds or European equities as opportunities arise."
+  ~Position,               ~Wt,     ~R_Unified_Level, ~R_Unified_Reasoning,
+                                                       ~R_Div_Level,         ~R_Divided_Reasoning,
+
+  "Vanguard EM ETF",       "19.7%", "M Neg",
+    "Tariff uncertainty + USD strength weigh on EM valuations. China-heavy exposure most at risk from 145% tariffs. Largest single position — concentration risk elevated.",
+    "M Pos",
+    "Gridlock moderates tariff escalation. 2019 analogue: EM rallied 18% once D House constrained further China tariff hikes. Partial relief but China structural slowdown persists.",
+
+  "iShs EM Lcl Govt Bond", "9.7%",  "M Neg",
+    "Fed on hold = EM carry supported but USD strength erodes local currency bond returns. Stagflation tail risk would spike EM yields. Duration drag in rising-rate scenario.",
+    "L Pos",
+    "Less USD shock if tariff gridlock eases. EM FX stabilises. Slight positive from reduced policy uncertainty premium. Fed cut path unchanged — primary driver remains ECB/Fed divergence.",
+
+  "iShs Core EUR Govt Bond","8.6%", "L Pos",
+    "ECB cutting cycle is the most predictable macro driver. EUR duration offers carry + capital gain. Completely decoupled from US political cycle. Hold through ECB easing.",
+    "L Pos",
+    "No change — ECB path drives this position regardless of US political configuration. EUR appreciation would add modest FX tailwind for EUR-based investors.",
+
+  "iShs Global Tech ETF",  "7.7%",  "L Pos",
+    "Overheating regime supports tech earnings (AI capex, pricing power). R Unified = deregulation tailwind, no antitrust pressure. Mag7 concentration risk if rates stay elevated.",
+    "L Neg",
+    "D House = antitrust scrutiny risk (Big Tech breakup bills, data privacy legislation). Modest negative vs current scenario. Macro earnings driver unchanged — net impact small.",
+
+  "iShs MSCI Europe Mom.", "7.0%",  "L Pos",
+    "EU fiscal impulse (Germany EUR 500bn, rearmament) is regime-independent. Momentum factor benefits from trend persistence. Partial hedge vs US political uncertainty.",
+    "M Pos",
+    "Tariff gridlock reduces EU-US trade tension. EUR strengthens vs USD. European equities re-rate as political risk premium compresses. Momentum factor amplifies any positive move.",
+
+  "UBSL UC MSCI J",        "6.6%",  "M Neg",
+    "BOJ normalisation = yen strengthening = headwind for unhedged JPY equities. Japan-US tariff negotiation still open. Any tariff resolution = upside catalyst but timing uncertain.",
+    "L Neu",
+    "Gridlock has limited direct Japan impact. BOJ path unchanged. Japan tariff negotiation outcome is the key variable — independent of House control. Monitor USD/JPY closely.",
+
+  "MSSwETF-CHF di",        "6.0%",  "L Neu",
+    "Defensive safe-haven position. CHF strength = mild return drag in EUR terms but provides portfolio ballast. Low correlation to US political cycle. Intentional risk buffer.",
+    "L Pos",
+    "Risk-on environment from gridlock-driven uncertainty compression = mild positive for equities including Switzerland. CHF safe-haven premium slightly reduced = better equity returns.",
+
+  "EUR Cash",              "5.6%",  "M Pos",
+    "EUR appreciating vs USD as tariff de-dollarization dynamic plays out. Positive real carry in EUR context. Opportunity cost: should be deployed into higher-returning EUR assets.",
+    "M Pos",
+    "EUR appreciation accelerates if tariff gridlock reduces USD demand. Deploy into EUR bonds or European equities — cash drag becomes more costly in risk-on gridlock scenario.",
+
+  "USD Cash",              "4.9%",  "M Neg",
+    "USD weakening trend driven by tariff-induced de-dollarization and dollar weaponization concerns. Holding USD cash = implicit short EUR/USD. Negative real return in EUR terms.",
+    "H Neg",
+    "D House = further USD weakness signal (gridlock removes fiscal stimulus expectations). EUR/USD likely to appreciate further. Rotate urgently to EUR assets if midterm flip confirmed.",
+
+  "UBS So MSCI CU",        "4.3%",  "M Neg",
+    "USMCA renegotiation threat is the key headwind. Canadian market is commodity-heavy — tariffs disrupt energy and metals exports to US. CAD weak vs USD adds FX drag.",
+    "M Pos",
+    "Gridlock moderates USMCA renegotiation risk. Historical precedent: 2019 USMCA passed with D House support. Canada relief rally likely. Commodity inflation hedge provides floor.",
+
+  "Inv Ener USD-A",        "4.1%",  "H Neg",
+    "IRA rollback under R Unified is the direct structural headwind. Wind energy tax credits under review. US offshore permit delays. Most exposed position to current political regime.",
+    "H Pos",
+    "D House defends IRA wind tax credits — direct positive catalyst. 2019 analogue: clean energy rallied strongly when legislative gridlock protected Obama-era incentives. Add on signal.",
+
+  "iShs Glbl Engy",        "3.1%",  "L Pos",
+    "R Unified = fossil fuel deregulation (faster permits, pipeline approvals, LNG export expansion). Direct regulatory tailwind. Oil price driven more by OPEC/macro than politics.",
+    "L Neg",
+    "D House = slower deregulation, potential clean energy rebalancing in legislation. Moderate negative vs current scenario. Oil macro demand driver unchanged — net impact contained.",
+
+  "BETA ETF",              "2.9%",  "M Neg",
+    "Trump NATO stance creates geopolitical overhang for Poland (frontline state). EM risk-off from tariff uncertainty. EU fiscal support and NATO spending are partially offsetting positives.",
+    "L Pos",
+    "Gridlock reduces unilateral US foreign policy risk. NATO stance moderated by legislative constraints. EU fiscal support unchanged. EM risk premium compresses slightly.",
+
+  "UBS So Gl Go U",        "2.5%",  "L Pos",
+    "Gold at all-time highs (~USD 3,300/oz). De-dollarization + central bank buying + geopolitical uncertainty = strong structural bid. Miners have 2-3x operational leverage to gold price.",
+    "L Pos",
+    "Gold thesis is scenario-independent. Gridlock may reduce one uncertainty premium but de-dollarization and central bank buying continue regardless. Maintain — highest conviction position.",
+
+  "Cadeler Rg",            "1.4%",  "H Neg",
+    "US offshore wind permitting stalled under Trump administration. IRA exposure makes this the most politically binary stock in the portfolio. EU pipeline provides valuation floor only.",
+    "H Pos",
+    "D House = IRA defense = US offshore wind permits resume. EU offshore wind backlog is multi-year. Binary upside — speculative position size appropriate. Add aggressively on D House confirmation.",
+
+  "RS Technologie",        "0.4%",  "L Neu",
+    "Small-cap Japan tech. Idiosyncratic risk dominates — limited macro sensitivity. Low liquidity. No clear political regime linkage. Monitor for exit opportunity.",
+    "L Neu",
+    "No material change under either scenario. Japan tech driven by company-specific factors. Consider reducing for portfolio construction simplicity regardless of political outcome."
 )
 
-knitr::kable(reasoning_table,
-             col.names = c("Position", "Expected Impact", "Reasoning"),
-             caption = "AC Portfolio: Slide 17-18 Reasoning Column (Verbatim Presentation Text)") %>%
-  kable_styling(latex_options = c("hold_position", "scale_down", "striped"), font_size = 7) %>%
-  column_spec(2, bold = TRUE,
-              color = ifelse(grepl("High Risk", reasoning_table$Expected_Impact), "red",
-                      ifelse(grepl("Positive|Low / Positive", reasoning_table$Expected_Impact), "blue",
-                             "black"))) %>%
-  column_spec(3, width = "8cm")
+# Split into two display tables for readability
+rt_current <- reasoning_table %>%
+  dplyr::select(Position, Wt, R_Unified_Level, R_Unified_Reasoning) %>%
+  rename(`Weight` = Wt, `Impact` = R_Unified_Level, `Reasoning` = R_Unified_Reasoning)
+
+rt_midterm <- reasoning_table %>%
+  dplyr::select(Position, Wt, R_Div_Level, R_Divided_Reasoning) %>%
+  rename(`Weight` = Wt, `Impact` = R_Div_Level, `Reasoning` = R_Divided_Reasoning)
+
+color_impact <- function(x) {
+  ifelse(grepl("H Neg", x), "red",
+  ifelse(grepl("M Neg", x), "orange",
+  ifelse(grepl("H Pos", x), "blue",
+  ifelse(grepl("M Pos", x), "blue",
+  ifelse(grepl("L Pos", x), "black",
+         "black")))))
+}
+
+cat("### Scenario A: Current — R Unified (Trump + R Congress, 2025–Nov 2026)\n\n")
+knitr::kable(rt_current,
+             col.names = c("Position", "Wt", "Impact", "Reasoning"),
+             caption = "Scenario A: R Unified — Impact and Reasoning per Position") %>%
+  kable_styling(latex_options = c("hold_position", "scale_down", "striped"), font_size = 7.5) %>%
+  column_spec(3, bold = TRUE, color = color_impact(rt_current$Impact)) %>%
+  column_spec(4, width = "9cm")
+
+cat("\n\n### Scenario B: Post-Midterm — R Pres / D House (if Democrats flip House Nov 2026)\n\n")
+knitr::kable(rt_midterm,
+             col.names = c("Position", "Wt", "Impact", "Reasoning"),
+             caption = "Scenario B: R Pres/D House — Impact and Reasoning per Position") %>%
+  kable_styling(latex_options = c("hold_position", "scale_down", "striped"), font_size = 7.5) %>%
+  column_spec(3, bold = TRUE, color = color_impact(rt_midterm$Impact)) %>%
+  column_spec(4, width = "9cm")
 ```
 
 ---
